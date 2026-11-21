@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VTech Sales Tracker</title>
+<style>
+  :root { --ink:#14213d; --muted:#5b6472; --line:#e3e6eb; --bg:#f7f8fa; --accent:#1d4ed8; --red:#b91c1c; --green:#15803d; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+  header { display:flex; align-items:center; gap:16px; padding:12px 20px; background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:1; }
+  header h1 { font-size:16px; margin:0; }
+  header nav { display:flex; gap:4px; }
+  header nav a { padding:6px 10px; border-radius:6px; color:var(--muted); text-decoration:none; }
+  header nav a.on { background:var(--bg); color:var(--ink); font-weight:600; }
+  header .who { margin-left:auto; color:var(--muted); }
+  main { max-width:1200px; margin:0 auto; padding:20px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  input, select, textarea { font:inherit; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; color:inherit; }
+  textarea { width:100%; min-height:70px; }
+  button.primary { background:var(--accent); color:#fff; border:0; padding:8px 14px; border-radius:6px; font:inherit; font-weight:600; cursor:pointer; }
+  button.link { background:none; border:0; color:var(--accent); cursor:pointer; font:inherit; padding:0; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:600; }
+  td.r, th.r { text-align:right; }
+  a { color:var(--accent); }
+  .tag { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; background:var(--bg); border:1px solid var(--line); }
+  .overdue { color:var(--red); font-weight:600; }
+  .muted { color:var(--muted); }
+  .err { color:var(--red); min-height:1.2em; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; }
+  .form { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; }
+  .form label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); font-weight:600; }
+  .stat { font-size:24px; font-weight:700; }
+  .auth { max-width:360px; margin:12vh auto; }
+  .auth label { display:block; margin:10px 0 4px; font-weight:600; }
+  .auth input { width:100%; }
+  @media (max-width:760px) { header nav { overflow-x:auto; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
+const inr = (n) => n == null ? '—' : '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+const today = () => new Date(Date.now() + 330 * 6e4).toISOString().slice(0, 10);
+const label = (s) => String(s).replace('_', ' ');
+async function api(path, opts = {}) {
+  const res = await fetch('/api/' + path, { headers: { 'content-type': 'application/json' }, ...opts, body: opts.body && JSON.stringify(opts.body) });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== 'login') { me = null; boot(); throw new Error('Signed out'); }
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+const app = $('#app');
+let me = null, meta = null;
+
+function authForm(setup) {
+  app.innerHTML = `<div class="auth card"><h2>${setup ? 'Create admin account' : 'Sign in'}</h2><p class="muted">VTech Sales Tracker</p>
+    ${setup ? '<label>Name</label><input id="name">' : ''}<label>Email</label><input id="email" type="email" autocomplete="username">
+    <label>Password</label><input id="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}">
+    <p class="err" id="err"></p><button class="primary" id="go">${setup ? 'Create account' : 'Sign in'}</button></div>`;
+  $('#go').onclick = async () => {
+    try {
+      const b = { email: $('#email').value, password: $('#password').value, name: setup ? $('#name').value : undefined };
+      if (setup) await api('setup', { method: 'POST', body: b });
+      await api('login', { method: 'POST', body: b });
+      boot();
+    } catch (e) { $('#err').textContent = e.message; }
+  };
+}
+
+function shell(active, inner) {
+  const tabs = [['dashboard', 'Dashboard'], ['leads', 'Leads'], ['prices', 'Price list'], ...(me.role === 'admin' ? [['users', 'Users']] : [])];
+  app.innerHTML = `<header><h1>VTech Sales</h1><nav>${tabs.map(([k, l]) => `<a href="#${k}" class="${active === k ? 'on' : ''}">${l}</a>`).join('')}</nav>
+    <span class="who">${esc(me.name)} · <button class="link" id="out">Sign out</button></span></header><main>${inner}</main>`;
+  $('#out').onclick = async () => { await api('logout', { method: 'POST' }); me = null; boot(); };
+}
+
+async function dashboard() {
+  const d = await api('dashboard');
+  const by = Object.fromEntries(d.byStage.map((s) => [s.stage, s]));
+  const open = d.byStage.filter((s) => !['won', 'lost'].includes(s.stage));
+  shell('dashboard', `<div class="grid">
+    <div class="card"><div class="muted">Follow-ups due</div><div class="stat ${d.due ? 'overdue' : ''}">${d.due}</div><a href="#leads/due">View</a></div>
+    <div class="card"><div class="muted">Open pipeline</div><div class="stat">${inr(open.reduce((s, x) => s + x.value, 0))}</div><span class="muted">${open.reduce((s, x) => s + x.n, 0)} leads</span></div>
+    <div class="card"><div class="muted">Won</div><div class="stat" style="color:var(--green)">${inr(by.won?.value ?? 0)}</div><span class="muted">${by.won?.n ?? 0} leads</span></div></div>
+    <div class="grid"><div class="card"><h3>By stage</h3><table>${meta.stages.map((s) => `<tr><td>${label(s)}</td><td class="r">${by[s]?.n ?? 0}</td><td class="r">${inr(by[s]?.value ?? 0)}</td></tr>`).join('')}</table></div>
+    <div class="card"><h3>By salesperson</h3><table><tr><th>Name</th><th class="r">Leads</th><th class="r">Won value</th></tr>${d.byOwner.map((o) => `<tr><td>${esc(o.name)}</td><td class="r">${o.leads}</td><td class="r">${inr(o.won_value ?? 0)}</td></tr>`).join('')}</table></div></div>`);
+}
+
+const leadForm = (l = {}) => `<div class="form">
+  <label>Company *<input name="company" value="${esc(l.company)}"></label><label>Contact<input name="contact" value="${esc(l.contact)}"></label>
+  <label>Phone<input name="phone" value="${esc(l.phone)}"></label><label>Email<input name="email" value="${esc(l.email)}"></label>
+  <label>City<input name="city" value="${esc(l.city)}"></label><label>Source<input name="source" value="${esc(l.source)}" placeholder="Referral, architect, walk-in…"></label>
+  <label>Stage<select name="stage">${meta.stages.map((s) => `<option value="${s}" ${s === (l.stage || 'new') ? 'selected' : ''}>${label(s)}</option>`).join('')}</select></label>
+  <label>Est. value (₹)<input name="est_value" type="number" min="0" value="${esc(l.est_value)}"></label>
+  <label>Next follow-up<input name="next_followup" type="date" value="${esc(l.next_followup)}"></label>
+  ${me.role === 'admin' && l.id ? `<label>Owner<select name="owner_id">${meta.users.map((u) => `<option value="${u.id}" ${u.id === l.owner_id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>` : ''}
+  </div><label class="muted" style="display:block;margin-top:10px;font-size:12px;font-weight:600">Notes<textarea name="notes">${esc(l.notes)}</textarea></label>`;
+const formData = (el) => Object.fromEntries([...el.querySelectorAll('[name]')].map((i) => [i.name, i.value]));
+
+async function leads(dueOnly) {
+  shell('leads', `<div class="bar"><input id="q" placeholder="Search company, contact, phone, city" style="flex:1;min-width:220px">
+    <select id="stage"><option value="">All stages</option>${meta.stages.map((s) => `<option value="${s}">${label(s)}</option>`).join('')}</select>
+    ${me.role === 'admin' ? `<select id="owner"><option value="0">Everyone</option>${meta.users.map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>` : ''}
+    <label class="muted"><input type="checkbox" id="due" ${dueOnly ? 'checked' : ''}> Due only</label><button class="primary" id="new">New lead</button></div>
+    <div class="card" id="newcard" hidden><h3>New lead</h3><div id="nf">${leadForm()}</div><p class="err" id="nerr"></p><button class="primary" id="save">Save lead</button></div>
+    <div class="card" id="list">Loading…</div>`);
+  const load = async () => {
+    const qs = new URLSearchParams({ q: $('#q').value, stage: $('#stage').value, owner: $('#owner')?.value ?? '0', due: $('#due').checked ? '1' : '0' });
+    const rows = await api('leads?' + qs);
+    $('#list').innerHTML = !rows.length ? '<p class="muted">No leads match.</p>' : `<table><tr><th>Company</th><th>Contact</th><th>Stage</th><th class="r">Value</th><th>Follow-up</th>${me.role === 'admin' ? '<th>Owner</th>' : ''}<th>BOQs</th></tr>
+      ${rows.map((l) => `<tr><td><a href="#lead/${l.id}">${esc(l.company)}</a><br><span class="muted">${esc(l.city)}</span></td><td>${esc(l.contact)}<br><span class="muted">${esc(l.phone)}</span></td>
+        <td><span class="tag">${label(l.stage)}</span></td><td class="r">${inr(l.est_value)}</td>
+        <td class="${l.next_followup && l.next_followup <= today() && !['won', 'lost'].includes(l.stage) ? 'overdue' : ''}">${esc(l.next_followup ?? '—')}</td>
+        ${me.role === 'admin' ? `<td>${esc(l.owner_name)}</td>` : ''}<td>${l.boq_count}</td></tr>`).join('')}</table>`;
+  };
+  let t; $('#q').oninput = () => { clearTimeout(t); t = setTimeout(load, 250); };
+  ['#stage', '#owner', '#due'].forEach((s) => $(s) && ($(s).onchange = load));
+  $('#new').onclick = () => ($('#newcard').hidden = !$('#newcard').hidden);
+  $('#save').onclick = async () => { try { const r = await api('leads', { method: 'POST', body: formData($('#nf')) }); location.hash = 'lead/' + r.id; } catch (e) { $('#nerr').textContent = e.message; } };
+  load();
+}
+
+async function leadView(id) {
+  const [l, products] = await Promise.all([api('leads/' + id), api('products')]);
+  shell('leads', `<p><a href="#leads">← Leads</a></p>
+    <div class="card"><h2 style="margin-top:0">${esc(l.company)} <span class="tag">${label(l.stage)}</span></h2><div id="ef">${leadForm(l)}</div><p class="err" id="eerr"></p><button class="primary" id="upd">Save changes</button></div>
+    <div class="grid"><div class="card"><h3>Log interaction</h3><div class="form" id="if">
+      <label>Type<select name="kind">${meta.kinds.map((k) => `<option value="${k}">${label(k)}</option>`).join('')}</select></label>
+      <label>Next follow-up<input name="next_followup" type="date"></label>
+      <label>Move stage to<select name="stage"><option value="">(no change)</option>${meta.stages.map((s) => `<option value="${s}">${label(s)}</option>`).join('')}</select></label></div>
+      <textarea name="note" placeholder="What happened?" style="margin-top:10px"></textarea><p class="err" id="ierr"></p><button class="primary" id="log">Add</button>
+      <h3>History</h3>${l.interactions.map((i) => `<p><span class="tag">${label(i.kind)}</span> <span class="muted">${esc(i.at.slice(0, 16))} · ${esc(i.user_name)}</span><br>${esc(i.note)}</p>`).join('') || '<p class="muted">No interactions yet.</p>'}</div>
+    <div class="card"><h3>BOQs issued</h3><table><tr><th>Ref</th><th>Date</th><th class="r">Total</th><th>Status</th></tr>
+      ${l.boqs.map((b) => `<tr><td><button class="link" data-boq="${b.id}">${esc(b.ref)}</button></td><td>${esc(b.issued_on)}</td><td class="r">${inr(b.total)}</td>
+        <td><select data-bs="${b.id}">${meta.boqStatus.map((s) => `<option ${s === b.status ? 'selected' : ''}>${s}</option>`).join('')}</select></td></tr>`).join('') || '<tr><td colspan="4" class="muted">None yet</td></tr>'}</table>
+      <div id="boqview"></div>
+      <h3>New BOQ</h3><table id="lines"><tr><th>Item</th><th>Qty</th><th>Disc %</th><th class="r">Line</th></tr></table>
+      <button class="link" id="addline">+ Add line</button><p><b>Total: <span id="btotal">₹0</span></b></p><p class="err" id="berr"></p><button class="primary" id="mkboq">Issue BOQ</button></div></div>`);
+  const prodOpts = products.map((p) => `<option value="${p.id}" data-price="${p.unit_price}" data-cap="${p.max_discount_pct}">${esc(p.sku)} — ${esc(p.name)} (${inr(p.unit_price)}, max ${p.max_discount_pct}%)</option>`).join('');
+  const recalc = () => {
+    let total = 0;
+    $('#lines').querySelectorAll('tr.ln').forEach((tr) => {
+      const o = tr.querySelector('select').selectedOptions[0];
+      const v = (o ? +o.dataset.price : 0) * (+tr.querySelector('.q').value || 0) * (1 - (+tr.querySelector('.d').value || 0) / 100);
+      tr.querySelector('.t').textContent = inr(v); total += v;
+    });
+    $('#btotal').textContent = inr(total);
+  };
+  $('#addline').onclick = () => {
+    if (!products.length) { $('#berr').textContent = 'The price list is empty — an admin must add products first.'; return; }
+    const tr = document.createElement('tr'); tr.className = 'ln';
+    tr.innerHTML = `<td><select style="max-width:340px">${prodOpts}</select></td><td><input class="q" type="number" min="1" value="1" style="width:70px"></td>
+      <td><input class="d" type="number" min="0" max="100" value="0" style="width:70px"></td><td class="r t"></td>`;
+    $('#lines').append(tr); tr.oninput = recalc; recalc();
+  };
+  $('#mkboq').onclick = async () => {
+    const lines = [...$('#lines').querySelectorAll('tr.ln')].map((tr) => ({ product_id: tr.querySelector('select').value, qty: tr.querySelector('.q').value, discount_pct: tr.querySelector('.d').value }));
+    try { await api(`leads/${id}/boqs`, { method: 'POST', body: { lines } }); leadView(id); } catch (e) { $('#berr').textContent = e.message; }
+  };
+  $('#upd').onclick = async () => { try { await api('leads/' + id, { method: 'PATCH', body: formData($('#ef')) }); leadView(id); } catch (e) { $('#eerr').textContent = e.message; } };
+  $('#log').onclick = async () => {
+    const b = { ...formData($('#if')), note: $('textarea[name=note]').value };
+    try { await api(`leads/${id}/interactions`, { method: 'POST', body: b }); leadView(id); } catch (e) { $('#ierr').textContent = e.message; }
+  };
+  app.querySelectorAll('[data-bs]').forEach((s) => (s.onchange = () => api('boqs/' + s.dataset.bs, { method: 'PATCH', body: { status: s.value } })));
+  app.querySelectorAll('[data-boq]').forEach((b) => (b.onclick = async () => {
+    const q = await api('boqs/' + b.dataset.boq);
+    $('#boqview').innerHTML = `<h4>${esc(q.ref)}</h4><table><tr><th>Item</th><th class="r">Qty</th><th class="r">Unit</th><th class="r">Disc</th><th class="r">Line</th></tr>
+      ${q.lines.map((x) => `<tr><td>${esc(x.description)}</td><td class="r">${x.qty}</td><td class="r">${inr(x.unit_price)}</td><td class="r">${x.discount_pct}%</td><td class="r">${inr(x.line_total)}</td></tr>`).join('')}
+      <tr><td colspan="4" class="r"><b>Total</b></td><td class="r"><b>${inr(q.total)}</b></td></tr></table>`;
+  }));
+}
+
+async function prices() {
+  const rows = await api('products');
+  const admin = me.role === 'admin';
+  shell('prices', `${admin ? `<div class="card"><h3>Add product</h3><div class="form" id="pf"><label>SKU<input name="sku"></label><label>Name<input name="name"></label>
+      <label>Brand<input name="brand"></label><label>Unit price (₹)<input name="unit_price" type="number" min="0"></label><label>Max discount %<input name="max_discount_pct" type="number" min="0" max="100" value="0"></label></div>
+      <p class="err" id="perr"></p><button class="primary" id="padd">Add</button></div>` : ''}
+    <div class="card"><table><tr><th>SKU</th><th>Name</th><th>Brand</th><th class="r">Price</th><th class="r">Max disc</th>${admin ? '<th></th>' : ''}</tr>
+    ${rows.map((p) => `<tr style="${p.active ? '' : 'opacity:.5'}"><td>${esc(p.sku)}</td><td>${esc(p.name)}</td><td>${esc(p.brand)}</td>
+      <td class="r">${admin ? `<input data-pp="${p.id}" type="number" min="0" value="${p.unit_price}" style="width:110px">` : inr(p.unit_price)}</td>
+      <td class="r">${admin ? `<input data-pd="${p.id}" type="number" min="0" max="100" value="${p.max_discount_pct}" style="width:70px">` : p.max_discount_pct + '%'}</td>
+      ${admin ? `<td><button class="link" data-pa="${p.id}" data-on="${p.active}">${p.active ? 'Retire' : 'Restore'}</button></td>` : ''}</tr>`).join('') || '<tr><td colspan="6" class="muted">No products yet.</td></tr>'}</table></div>`);
+  if (!admin) return;
+  $('#padd').onclick = async () => { try { await api('products', { method: 'POST', body: formData($('#pf')) }); prices(); } catch (e) { $('#perr').textContent = e.message; } };
+  app.querySelectorAll('[data-pp]').forEach((i) => (i.onchange = () => api('products/' + i.dataset.pp, { method: 'PATCH', body: { unit_price: i.value } })));
+  app.querySelectorAll('[data-pd]').forEach((i) => (i.onchange = () => api('products/' + i.dataset.pd, { method: 'PATCH', body: { max_discount_pct: i.value } })));
+  app.querySelectorAll('[data-pa]').forEach((b) => (b.onclick = async () => { await api('products/' + b.dataset.pa, { method: 'PATCH', body: { active: b.dataset.on !== '1' } }); prices(); }));
+}
+
+async function users() {
+  const rows = await api('users');
+  shell('users', `<div class="grid"><div class="card"><h3>Team</h3><table><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr>
+    ${rows.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td><td>${u.id === me.id ? '' : `<button class="link" data-id="${u.id}" data-active="${u.active}">${u.active ? 'Disable' : 'Enable'}</button>`}</td></tr>`).join('')}</table>
+    <p class="muted">Follow-up reminders go out daily at 08:30 IST. Each salesperson's email must be verified once in Cloudflare Email Routing.</p><button class="link" id="rem">Send reminders now</button> <span id="rmsg" class="muted"></span></div>
+    <div class="card"><h3>Add salesperson</h3><div class="form" id="uf"><label>Name<input name="name"></label><label>Email<input name="email"></label>
+      <label>Temporary password<input name="password" placeholder="10+ characters"></label><label>Role<select name="role"><option value="member">salesperson</option><option value="admin">admin</option></select></label></div>
+      <p class="err" id="uerr"></p><button class="primary" id="uadd">Add</button></div></div>`);
+  $('#uadd').onclick = async () => { try { await api('users', { method: 'POST', body: formData($('#uf')) }); meta = await api('meta'); users(); } catch (e) { $('#uerr').textContent = e.message; } };
+  $('#rem').onclick = async () => { const r = await api('send-reminders', { method: 'POST' }); $('#rmsg').textContent = `Sent to ${r.sent} of ${r.users}${r.failed.length ? '; failed: ' + r.failed.join(', ') : ''}`; };
+  app.querySelectorAll('button[data-id]').forEach((b) => (b.onclick = async () => { await api('users/' + b.dataset.id, { method: 'PATCH', body: { active: b.dataset.active !== '1' } }); users(); }));
+}
+
+function route() {
+  if (!me) return;
+  const [v, arg] = (location.hash.slice(1) || 'dashboard').split('/');
+  const go = { dashboard, leads: () => leads(arg === 'due'), lead: () => leadView(arg), prices, users: me.role === 'admin' ? users : dashboard }[v] || dashboard;
+  go().catch((e) => { if (e.message !== 'Signed out') app.querySelector('main')?.insertAdjacentHTML('afterbegin', `<p class="err">${esc(e.message)}</p>`); });
+}
+window.onhashchange = route;
+async function boot() {
+  try { me = await api('me'); meta = await api('meta'); route(); }
+  catch { me = null; const { needsSetup } = await api('needs-setup'); authForm(needsSetup); }
+}
+boot();
+</script>
+</body>
+</html>

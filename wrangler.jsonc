@@ -1,0 +1,13 @@
+// VTech Sales Tracker — Cloudflare Worker + D1. Workers Builds deploys on every push to main.
+{
+  "name": "vtech-sales-tracker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*"] },
+  "d1_databases": [{ "binding": "DB", "database_name": "vtech-sales-tracker", "database_id": "857f2e37-a8b2-4bef-997c-b37ec03f60d7" }],
+  "send_email": [{ "name": "MAILER" }],
+  "vars": { "ADMIN_EMAIL": "hansalgandhi@gmail.com", "MAIL_FROM": "sales@vtech.services" },
+  "triggers": { "crons": ["0 3 * * *"] }, // 08:30 IST daily follow-up reminders
+  "routes": [{ "pattern": "sales.vtech.services", "custom_domain": true }],
+  "observability": { "enabled": true }
+}
