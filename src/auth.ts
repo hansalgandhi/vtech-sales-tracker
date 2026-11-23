@@ -1,7 +1,7 @@
 // Email + password auth on D1. PBKDF2-SHA256 (100k iterations, Workers' max), random session tokens
 // stored hashed, HttpOnly cookie. First account can only be created for ADMIN_EMAIL via /api/setup.
 
-export interface User { id: number; email: string; name: string; role: 'admin' | 'member' }
+export interface User { id: number; email: string; name: string; role: 'admin' | 'member'; max_discount_pct: number }
 
 const COOKIE = 'vt_session';
 const SESSION_DAYS = 30;
@@ -31,13 +31,15 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL CHECK (role IN ('admin','member')), pw_salt TEXT NOT NULL, pw_hash TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS sessions (
-  token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at TEXT NOT NULL);`;
+  token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS login_fails (key TEXT NOT NULL, at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS login_fails_key ON login_fails(key, at);`;
 
 export async function currentUser(db: D1Database, req: Request): Promise<User | null> {
   const token = req.headers.get('cookie')?.match(new RegExp(`${COOKIE}=([a-f0-9]{64})`))?.[1];
   if (!token) return null;
   return db
-    .prepare(`SELECT u.id, u.email, u.name, u.role FROM sessions s JOIN users u ON u.id = s.user_id
+    .prepare(`SELECT u.id, u.email, u.name, u.role, u.max_discount_pct FROM sessions s JOIN users u ON u.id = s.user_id
               WHERE s.token_hash = ? AND s.expires_at > datetime('now') AND u.active = 1`)
     .bind(await sha256(token))
     .first<User>();
@@ -55,15 +57,26 @@ async function startSession(db: D1Database, userId: number) {
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
   Response.json(data, { status, headers });
 
-export async function login(db: D1Database, body: { email?: string; password?: string }) {
-  const email = String(body.email ?? '').trim();
+// shortcut: lockout is per email and per IP, so someone can lock a known email out for 15 minutes; add a CAPTCHA if that is abused.
+export async function login(db: D1Database, body: { email?: string; password?: string }, ip: string) {
+  const email = String(body.email ?? '').trim().slice(0, 200);
+  const keys = [`e:${email.toLowerCase()}`, `i:${ip}`];
+  const fails = await db
+    .prepare(`SELECT (SELECT COUNT(*) FROM login_fails WHERE key = ?1 AND at > datetime('now', '-15 minutes')) e,
+                     (SELECT COUNT(*) FROM login_fails WHERE key = ?2 AND at > datetime('now', '-15 minutes')) i`)
+    .bind(...keys)
+    .first<{ e: number; i: number }>();
+  if (fails!.e >= 5 || fails!.i >= 20) return json({ error: 'Too many failed attempts. Try again in 15 minutes.' }, 429);
   const row = await db
     .prepare('SELECT id, pw_salt, pw_hash FROM users WHERE email = ? AND active = 1')
     .bind(email)
     .first<{ id: number; pw_salt: string; pw_hash: string }>();
   // Hash even when the user is missing so response time doesn't reveal which emails exist.
   const { hash } = await hashPassword(String(body.password ?? ''), row?.pw_salt ?? '00'.repeat(16));
-  if (!row || !safeEqual(hash, row.pw_hash)) return json({ error: 'Invalid email or password' }, 401);
+  if (!row || !safeEqual(hash, row.pw_hash)) {
+    await db.batch(keys.map((k) => db.prepare('INSERT INTO login_fails (key) VALUES (?)').bind(k)));
+    return json({ error: 'Invalid email or password' }, 401);
+  }
   return json({ ok: true }, 200, { 'set-cookie': await startSession(db, row.id) });
 }
 
@@ -81,7 +94,9 @@ export async function setup(db: D1Database, adminEmail: string, body: { email?: 
   return createUser(db, { email, name: body.name ?? 'Admin', password: body.password, role: 'admin' });
 }
 
-export async function createUser(db: D1Database, b: { email?: string; name?: string; password?: string; role?: string }) {
+const pct = (v: unknown) => (v === undefined || v === null || v === '' || isNaN(Number(v)) ? 100 : Math.min(100, Math.max(0, Number(v))));
+
+export async function createUser(db: D1Database, b: { email?: string; name?: string; password?: string; role?: string; max_discount_pct?: unknown }) {
   const email = String(b.email ?? '').trim();
   const name = String(b.name ?? '').trim();
   const password = String(b.password ?? '');
@@ -91,14 +106,21 @@ export async function createUser(db: D1Database, b: { email?: string; name?: str
   if (password.length < 10) return json({ error: 'Password must be at least 10 characters' }, 400);
   const { salt, hash } = await hashPassword(password);
   try {
-    await db.prepare('INSERT INTO users (email, name, role, pw_salt, pw_hash) VALUES (?, ?, ?, ?, ?)').bind(email, name, role, salt, hash).run();
+    await db.prepare('INSERT INTO users (email, name, role, pw_salt, pw_hash, max_discount_pct) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(email, name, role, salt, hash, pct(b.max_discount_pct)).run();
   } catch {
     return json({ error: 'Email already exists' }, 409);
   }
   return json({ ok: true });
 }
 
-export async function updateUser(db: D1Database, id: number, b: { name?: string; role?: string; active?: boolean; password?: string }) {
+export async function updateUser(db: D1Database, id: number, b: { name?: string; role?: string; active?: boolean; password?: string; max_discount_pct?: unknown }) {
+  if ((b.role !== undefined && b.role !== 'admin') || b.active === false) {
+    const others = await db.prepare(`SELECT COUNT(*) n FROM users WHERE role = 'admin' AND active = 1 AND id != ?`).bind(id).first<{ n: number }>();
+    if (others!.n === 0) return json({ error: 'There must be at least one active admin' }, 400);
+  }
+  if (b.name !== undefined && !String(b.name).trim()) return json({ error: 'Name required' }, 400);
+  if (b.max_discount_pct !== undefined) await db.prepare('UPDATE users SET max_discount_pct = ? WHERE id = ?').bind(pct(b.max_discount_pct), id).run();
   if (b.password !== undefined) {
     if (String(b.password).length < 10) return json({ error: 'Password must be at least 10 characters' }, 400);
     const { salt, hash } = await hashPassword(String(b.password));
@@ -115,6 +137,13 @@ export async function updateUser(db: D1Database, id: number, b: { name?: string;
 }
 
 export async function listUsers(db: D1Database) {
-  const { results } = await db.prepare('SELECT id, email, name, role, active, created_at FROM users ORDER BY name').all();
+  const { results } = await db.prepare('SELECT id, email, name, role, active, max_discount_pct, created_at FROM users ORDER BY name').all();
   return json(results);
+}
+
+export async function changeOwnPassword(db: D1Database, user: User, b: { current?: string; password?: string }) {
+  const row = await db.prepare('SELECT pw_salt, pw_hash FROM users WHERE id = ?').bind(user.id).first<{ pw_salt: string; pw_hash: string }>();
+  const { hash } = await hashPassword(String(b.current ?? ''), row!.pw_salt);
+  if (!safeEqual(hash, row!.pw_hash)) return json({ error: 'Current password is wrong' }, 400);
+  return updateUser(db, user.id, { password: String(b.password ?? '') }); // also signs out every session
 }

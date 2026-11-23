@@ -2,11 +2,14 @@
 
 Lead tracking for VTech Technologies' sales team.
 
-- **Leads** per salesperson (reps see only their own; admins see all and can reassign), stages from new → won/lost, estimated value, next follow-up date.
+- **Leads** per salesperson (reps see only their own; admins see all and can reassign): client requirements, stage from new → won/lost, estimated value, next follow-up date. The list shows each lead's last interaction, next follow-up, BOQs sent and the last BOQ's value, with filters for "follow-up due" and "no contact in 7+ days" and a CSV export.
 - **Interactions** log (call, meeting, site visit, email, WhatsApp, note) that also sets the next follow-up and stage.
-- **BOQs issued** per lead, priced from the central **price list**. Each product has a max discount %; reps cannot exceed it, admins can. Issuing a BOQ moves the lead to "BOQ sent".
+- **BOQs** per lead, priced only from the central **price list**; a printable page per BOQ, a register of every BOQ, and "Revise" to start a new one from an old one. The lead shows the price last sent for each item.
+- **Price list**: admin-only edits, CSV import, and a log of every price or discount-limit change.
+- **Discounts**: each product has a max discount and each salesperson has their own limit. A BOQ above the lower of the two is held as "awaiting approval", admins are emailed, and it only counts as sent once an admin approves it.
 - **Reminders**: every day at 08:30 IST each salesperson is emailed their overdue + today's follow-ups.
-- **Stack**: one Cloudflare Worker (`src/index.ts`) + D1 + static `public/index.html`. Push to `main` deploys via Workers Builds.
+- **Accounts**: users change their own password; admins reset passwords, set roles and limits. Sign-in locks for 15 minutes after 5 wrong passwords.
+- **Stack**: one Cloudflare Worker (`src/index.ts`) + D1 + static `public/` (`index.html`, `app.js`, `_headers`). Push to `main` deploys via Workers Builds. New columns are added to the live database automatically on the first request after a deploy.
 
 ## Setup (once)
 1. Open https://sales.vtech.services and create the admin account with `ADMIN_EMAIL` (set in `wrangler.jsonc`).
@@ -15,3 +18,9 @@ Lead tracking for VTech Technologies' sales team.
 
 ## Local dev
 `npm i && npx wrangler dev` — uses a local D1; tables are created on first request.
+
+## Tests
+```
+npx wrangler dev --port 8799 --var ADMIN_EMAIL:admin@test.local   # terminal 1
+npm test                                                          # terminal 2
+```
