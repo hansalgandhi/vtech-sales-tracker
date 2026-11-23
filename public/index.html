@@ -38,6 +38,22 @@
   .auth label { display:block; margin:10px 0 4px; font-weight:600; }
   .auth input { width:100%; }
   @media (max-width:760px) { header nav { overflow-x:auto; } }
+  /* Motion on Pin UI's springs (pinui.xyz, lib/motion.ts), ported to CSS linear() easings. */
+  :root { --pin-spring:cubic-bezier(0.22,1,0.36,1); --pin-soft:cubic-bezier(0.25,1,0.5,1); }
+  @supports (transition-timing-function: linear(0, 1)) { :root {
+    --pin-spring:linear(0, 0.091, 0.268, 0.46, 0.622, 0.752, 0.846, 0.909, 0.951, 0.976, 0.99, 0.998, 1.002, 1.003, 1.003, 1.003, 1);
+    --pin-soft:linear(0, 0.069, 0.211, 0.371, 0.518, 0.644, 0.745, 0.82, 0.877, 0.918, 0.946, 0.966, 0.979, 0.987, 0.993, 0.996, 1);
+  } }
+  button, header nav a, input, select, textarea, td { transition:background-color 180ms var(--pin-spring), color 180ms var(--pin-spring), border-color 180ms var(--pin-spring), transform 180ms var(--pin-spring); }
+  tr:hover td { background:var(--bg); }
+  @keyframes pin-rise { from { opacity:0; transform:translateY(12px) scale(0.985); } }
+  @media (prefers-reduced-motion: no-preference) {
+    button.primary:active { transform:scale(0.97); }
+    .card { animation:pin-rise 410ms var(--pin-soft) backwards; }
+    .card:nth-child(2) { animation-delay:40ms; }
+    .card:nth-child(3) { animation-delay:80ms; }
+    .card:nth-child(n+4) { animation-delay:120ms; }
+  }
 </style>
 </head>
 <body>
