@@ -3,23 +3,33 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>VTech Sales Tracker</title>
+<title>VTech Sales</title>
+<meta name="theme-color" content="#6b2f8a" />
+<link rel="icon" href="/favicon.png" />
 <style>
-  :root { --ink:#14213d; --muted:#5b6472; --line:#e3e6eb; --bg:#f7f8fa; --accent:#1d4ed8; --red:#b91c1c; --green:#15803d; }
+  /* VTech brand: the logo's magenta-to-purple sweep. Purple carries links and controls; the full sweep is kept for the brand strip and primary actions. */
+  :root { --ink:#1c1326; --muted:#665c72; --line:#e8e3ee; --bg:#f8f6fb; --accent:#6b2f8a; --tint:#f3ebf8;
+    --brand:linear-gradient(90deg,#e82d8c,#6b3c8c); --brand-ink:linear-gradient(90deg,#c2308c,#6b3c8c); --red:#b91c1c; --green:#15803d; }
   * { box-sizing:border-box; }
   body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--bg); }
   header { display:flex; align-items:center; gap:16px; padding:12px 20px; background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:1; }
-  header h1 { font-size:16px; margin:0; }
-  header nav { display:flex; gap:4px; }
-  header nav a { padding:6px 10px; border-radius:6px; color:var(--muted); text-decoration:none; }
-  header nav a.on { background:var(--bg); color:var(--ink); font-weight:600; }
+  header::before { content:""; position:absolute; inset:0 0 auto 0; height:3px; background:var(--brand); }
+  .brand { display:flex; align-items:center; gap:8px; text-decoration:none; color:var(--ink); font-weight:700; font-size:15px; letter-spacing:.02em; }
+  .brand img { height:18px; width:auto; display:block; }
+  .brand span { padding-left:8px; border-left:1px solid var(--line); }
+  header nav { display:flex; gap:4px; position:relative; }
+  header nav a { padding:6px 10px; border-radius:6px; color:var(--muted); text-decoration:none; position:relative; white-space:nowrap; }
+  header nav a:hover { color:var(--ink); }
+  header nav a.on { color:var(--accent); font-weight:600; }
+  header nav .pill { position:absolute; left:0; top:0; bottom:0; width:0; border-radius:6px; background:var(--tint); pointer-events:none; }
   header .who { margin-left:auto; color:var(--muted); }
   main { max-width:1200px; margin:0 auto; padding:20px; }
   .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
   .bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
-  input, select, textarea { font:inherit; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; color:inherit; }
+  input, select, textarea { font:inherit; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; color:inherit; accent-color:var(--accent); }
+  input:focus, select:focus, textarea:focus { border-color:var(--accent); }
   textarea { width:100%; min-height:70px; }
-  button.primary { background:var(--accent); color:#fff; border:0; padding:8px 14px; border-radius:6px; font:inherit; font-weight:600; cursor:pointer; }
+  button.primary { background:var(--brand-ink); color:#fff; border:0; padding:8px 14px; border-radius:6px; font:inherit; font-weight:600; cursor:pointer; }
   button.link { background:none; border:0; color:var(--accent); cursor:pointer; font:inherit; padding:0; }
   table { width:100%; border-collapse:collapse; }
   th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -31,10 +41,17 @@
   .muted { color:var(--muted); }
   .err { color:var(--red); min-height:1.2em; }
   .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; }
+  .grid { margin-bottom:16px; } .grid > .card { margin-bottom:0; }
   .form { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; }
   .form label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); font-weight:600; }
-  .stat { font-size:24px; font-weight:700; }
+  .stat { font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .stat.won { color:var(--green); }
+  .toasts { position:fixed; top:64px; right:16px; z-index:5; display:grid; gap:8px; max-width:min(380px, calc(100vw - 32px)); }
+  .toast { background:#fff; border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:8px; padding:10px 14px; box-shadow:0 8px 24px rgba(28,19,38,.12); }
+  .toast.bad { border-left-color:var(--red); }
   .auth { max-width:360px; margin:12vh auto; }
+  .auth img { height:30px; width:auto; display:block; margin-bottom:18px; }
+  .auth button.primary { width:100%; margin-top:6px; padding:10px 14px; }
   .auth label { display:block; margin:10px 0 4px; font-weight:600; }
   .auth input { width:100%; }
   .scroll { overflow-x:auto; }
@@ -44,28 +61,52 @@
   .over { color:var(--red); font-weight:600; }
   .clip { max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .doc { background:#fff; border:1px solid var(--line); border-radius:10px; padding:32px; max-width:900px; margin:0 auto; }
-  .doc h1 { margin:0; font-size:22px; }
+  .doc h1 { margin:8px 0 0; font-size:15px; }
+  .doc .top img { height:30px; width:auto; display:block; }
+  .doc .top { border-bottom:3px solid; border-image:var(--brand) 1; padding-bottom:16px; }
   .doc .top { display:flex; justify-content:space-between; gap:24px; flex-wrap:wrap; margin-bottom:24px; }
   button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
   @media (max-width:760px) { header { flex-wrap:wrap; gap:8px; padding:10px 12px; } header nav { overflow-x:auto; order:3; width:100%; } main { padding:12px; }
     input, select, textarea, button.primary { font-size:16px; min-height:40px; } .doc { padding:16px; } }
   @media print { header, .noprint { display:none !important; } body { background:#fff; } main { padding:0; max-width:none; } .doc { border:0; padding:0; } .over { color:inherit; font-weight:inherit; } }
-  /* Motion on Pin UI's springs (pinui.xyz, lib/motion.ts), ported to CSS linear() easings. */
-  :root { --pin-spring:cubic-bezier(0.22,1,0.36,1); --pin-soft:cubic-bezier(0.25,1,0.5,1); }
+  /* Motion. Everything moves on a spring, written as CSS linear() curves sampled from the spring's own physics
+     (stiffness / damping / mass): quick 420/34/0.9, soft 260/30/1, weighty 240/22/1.1, exit 460/46/0.8, bouncy 600/18/0.6. */
+  :root { --spring:cubic-bezier(0.22,1,0.36,1); --soft:cubic-bezier(0.25,1,0.5,1); --weighty:cubic-bezier(0.34,1.3,0.64,1); --exit:cubic-bezier(0.4,0,1,1); --bouncy:cubic-bezier(0.34,1.56,0.64,1); }
   @supports (transition-timing-function: linear(0, 1)) { :root {
-    --pin-spring:linear(0, 0.091, 0.268, 0.46, 0.622, 0.752, 0.846, 0.909, 0.951, 0.976, 0.99, 0.998, 1.002, 1.003, 1.003, 1.003, 1);
-    --pin-soft:linear(0, 0.069, 0.211, 0.371, 0.518, 0.644, 0.745, 0.82, 0.877, 0.918, 0.946, 0.966, 0.979, 0.987, 0.993, 0.996, 1);
+    --spring:linear(0, 0.035, 0.117, 0.223, 0.337, 0.449, 0.552, 0.642, 0.72, 0.786, 0.839, 0.881, 0.915, 0.94, 0.96, 0.974, 0.985, 0.992, 0.997, 1, 1.002, 1.003, 1.003, 1.003, 1.002, 1);
+    --soft:linear(0, 0.024, 0.083, 0.163, 0.252, 0.342, 0.431, 0.513, 0.588, 0.655, 0.713, 0.764, 0.807, 0.844, 0.874, 0.899, 0.92, 0.937, 0.951, 0.962, 0.971, 0.978, 0.984, 0.988, 0.991, 0.994, 0.996, 0.998, 1);
+    --weighty:linear(0, 0.052, 0.175, 0.33, 0.492, 0.641, 0.768, 0.87, 0.946, 0.999, 1.032, 1.049, 1.055, 1.054, 1.048, 1.04, 1.031, 1.022, 1.015, 1.009, 1.004, 1.001, 0.999, 0.997, 0.997, 0.998, 1);
+    --exit:linear(0, 0.068, 0.201, 0.34, 0.466, 0.572, 0.659, 0.729, 0.786, 0.83, 0.866, 0.894, 0.916, 0.934, 0.947, 0.958, 0.967, 0.974, 0.979, 0.984, 0.987, 0.99, 0.992, 0.994, 0.996, 0.998, 1);
+    --bouncy:linear(0, 0.083, 0.281, 0.524, 0.758, 0.95, 1.084, 1.159, 1.184, 1.171, 1.137, 1.092, 1.049, 1.012, 0.987, 0.972, 0.966, 0.968, 0.974, 0.982, 0.99, 0.997, 1.002, 1.005, 1.006, 1.005, 1.003, 1);
   } }
-  button, header nav a, input, select, textarea, td { transition:background-color 180ms var(--pin-spring), color 180ms var(--pin-spring), border-color 180ms var(--pin-spring), transform 180ms var(--pin-spring); }
+  button, header nav a, input, select, textarea, td { transition:background-color 370ms var(--spring), color 370ms var(--spring), border-color 370ms var(--spring), transform 370ms var(--spring), box-shadow 370ms var(--spring); }
   tr:hover td { background:var(--bg); }
-  @keyframes pin-rise { from { opacity:0; transform:translateY(12px) scale(0.985); } }
+  tr.hist:hover td { background:var(--bg); }
+  @keyframes rise { from { opacity:0; transform:translateY(16px); filter:blur(10px); } }   /* a surface arriving: up out of a blur */
+  @keyframes pop { from { opacity:0; transform:scale(0.96) translateY(-4px); } }            /* something opening in place */
+  @keyframes chip { from { opacity:0; transform:scale(0.6); } }                             /* a small status landing */
+  @keyframes row { from { opacity:0; transform:translateY(8px); } }
+  @keyframes toast-in { from { opacity:0; transform:translateX(64px); } }
+  @keyframes leave { to { opacity:0; transform:scale(0.98) translateY(-2px); } }
+  @keyframes toast-out { to { opacity:0; transform:translateX(48px); } }
   @media (prefers-reduced-motion: no-preference) {
-    button.primary:active { transform:scale(0.97); }
-    .card { animation:pin-rise 410ms var(--pin-soft) backwards; }
-    .card:nth-child(2) { animation-delay:40ms; }
-    .card:nth-child(3) { animation-delay:80ms; }
-    .card:nth-child(n+4) { animation-delay:120ms; }
+    header nav .pill { transition:transform 370ms var(--spring), width 370ms var(--spring), opacity 200ms; }
+    button.primary:hover { box-shadow:0 4px 14px rgba(107,47,138,.28); }
+    button.primary:active { transform:scale(0.97); box-shadow:none; }
+    button.link:active { transform:scale(0.96); }
+    main > .card, main > .grid > .card, main > .doc, main > .bar, .auth { animation:rise 410ms var(--soft) backwards; }
+    main > :nth-child(2), main > .grid > .card:nth-child(2) { animation-delay:50ms; }
+    main > :nth-child(3), main > .grid > .card:nth-child(3) { animation-delay:100ms; }
+    main > :nth-child(n+4), main > .grid > .card:nth-child(n+4) { animation-delay:150ms; }
+    .auth img { animation:rise 410ms var(--soft) backwards; } .auth { animation-delay:160ms; }   /* the mark first, the form a beat after */
+    #newcard:not([hidden]), #overbox:not([hidden]), tr.hist, .ln, .warn { animation:pop 370ms var(--spring) backwards; transform-origin:top; }
+    .tag.over, .stat.overdue { animation:chip 390ms var(--bouncy) backwards; animation-delay:220ms; }
+    .fresh tr { animation:row 410ms var(--soft) backwards; animation-delay:calc(min(var(--i, 0), 14) * 22ms + 120ms); }
+    .toast { animation:toast-in 660ms var(--weighty) backwards; }
+    .toast.out { animation:toast-out 240ms var(--exit) forwards; }
+    .ln.out { animation:leave 110ms ease-in forwards; }
   }
+  @media print { *, *::before { animation:none !important; transition:none !important; } }
 </style>
 </head>
 <body>

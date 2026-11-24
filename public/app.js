@@ -19,13 +19,39 @@ async function api(path, opts = {}) {
 }
 // Runs an action from a click and shows any error in the given element instead of failing silently.
 const run = (errSel, fn) => async (ev) => { const e = $(errSel); if (e) e.textContent = ''; try { await fn(ev); } catch (x) { if (x.message !== 'Signed out') e ? (e.textContent = x.message) : alertBar(x.message); } };
-const alertBar = (msg) => $('main')?.insertAdjacentHTML('afterbegin', `<p class="err" role="alert">${esc(msg)}</p>`);
+// Messages slide in from the right and leave on their own; errors stay longer.
+function alertBar(msg, bad = true) {
+  const box = $('.toasts') ?? document.body.appendChild(Object.assign(document.createElement('div'), { className: 'toasts' }));
+  const t = Object.assign(document.createElement('div'), { className: 'toast' + (bad ? ' bad' : ''), textContent: msg });
+  t.setAttribute('role', bad ? 'alert' : 'status'); box.append(t);
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 260); }, bad ? 8000 : 5000);
+}
+const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Dashboard figures count up to their value, easing out like the soft spring.
+function countUp(el) {
+  const n = +el.dataset.n, fmt = el.dataset.inr ? inr : (v) => Math.round(v).toLocaleString('en-IN');
+  if (calm || !n) return void (el.textContent = fmt(n));
+  const t0 = performance.now();
+  const step = (t) => { const k = Math.min(1, (t - t0) / 700); el.textContent = fmt(n * (1 - Math.pow(1 - k, 4))); if (k < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+// Rows arrive one after another the first time a list shows; later reloads (typing in search) do not replay it.
+const stagger = (box, first) => { box.classList.toggle('fresh', first); $$('tr', box).forEach((tr, i) => tr.style.setProperty('--i', i)); };
+// The highlight behind the active tab slides from the tab you left to the one you opened.
+let pillAt = null;
+function movePill() {
+  const pill = $('header nav .pill'), on = $('header nav a.on');
+  if (!on) { pill.style.opacity = 0; pillAt = null; return; }
+  const set = (p) => { pill.style.transform = `translateX(${p.x}px)`; pill.style.width = p.w + 'px'; };
+  if (pillAt) { pill.style.transition = 'none'; set(pillAt); pill.offsetWidth; pill.style.transition = ''; }
+  set(pillAt = { x: on.offsetLeft, w: on.offsetWidth });
+}
 const app = $('#app');
 let me = null, meta = null;
 const isAdmin = () => me.role === 'admin';
 
 function authForm(setup) {
-  app.innerHTML = `<form class="auth card" id="af"><h2>${setup ? 'Create admin account' : 'Sign in'}</h2><p class="muted">VTech Sales Tracker</p>
+  app.innerHTML = `<form class="auth card" id="af"><img src="/logo.png" alt="VTech"><h2 style="margin:0">${setup ? 'Create admin account' : 'Sign in'}</h2><p class="muted" style="margin-top:2px">Sales</p>
     ${setup ? '<label for="name">Name</label><input id="name" required>' : ''}<label for="email">Email</label><input id="email" type="email" autocomplete="username" required>
     <label for="password">Password</label><input id="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" required>
     <p class="err" id="err" role="alert"></p><button class="primary">${setup ? 'Create account' : 'Sign in'}</button></form>`;
@@ -42,27 +68,29 @@ function authForm(setup) {
 
 function shell(active, inner) {
   const tabs = [['dashboard', 'Dashboard'], ['leads', 'Leads'], ['boqs', 'BOQs'], ['prices', 'Price list'], ...(isAdmin() ? [['users', 'Users']] : [])];
-  app.innerHTML = `<header><h1>VTech Sales</h1><nav>${tabs.map(([k, l]) => `<a href="#${k}" class="${active === k ? 'on' : ''}">${l}</a>`).join('')}</nav>
+  app.innerHTML = `<header><a class="brand" href="#dashboard"><img src="/logo.png" alt="VTech"><span>Sales</span></a><nav><i class="pill"></i>${tabs.map(([k, l]) => `<a href="#${k}" class="${active === k ? 'on' : ''}">${l}</a>`).join('')}</nav>
     <span class="who"><a href="#account">${esc(me.name)}</a> · <button class="link" id="out">Sign out</button></span></header><main>${inner}</main>`;
-  $('#out').onclick = async () => { await api('logout', { method: 'POST' }); me = null; boot(); };
+  $('#out').onclick = async () => { await api('logout', { method: 'POST' }); me = null; pillAt = null; boot(); };
+  movePill();
 }
 
 async function dashboard() {
   const d = await api('dashboard');
   const by = Object.fromEntries(d.byStage.map((s) => [s.stage, s]));
   const live = d.byStage.filter(open);
-  const card = (title, stat, sub, cls = '') => `<div class="card"><div class="muted">${title}</div><div class="stat ${cls}">${stat}</div>${sub}</div>`;
+  const card = (title, stat, sub, cls = '', money = false) => `<div class="card"><div class="muted">${title}</div><div class="stat ${cls}" data-n="${stat}" ${money ? 'data-inr="1"' : ''}>${money ? inr(stat) : stat}</div>${sub}</div>`;
   shell('dashboard', `<div class="grid">
     ${card('Follow-ups due', d.due, '<a href="#leads/due">View</a>', d.due ? 'overdue' : '')}
     ${card('No contact in 7+ days', d.stale, '<a href="#leads/stale">View</a>', d.stale ? 'overdue' : '')}
     ${d.pending ? card('BOQs awaiting approval', d.pending, '<a href="#boqs/pending_approval">Review</a>', 'overdue') : ''}
     ${card('New leads this month', d.new_leads, `<span class="muted">${d.byStage.reduce((s, x) => s + x.n, 0)} in total</span>`)}
     ${card('BOQs sent this month', d.boq_n, `<span class="muted">${inr(d.boq_value)}</span> · <a href="#boqs">All BOQs</a>`)}
-    ${card('Open pipeline', inr(live.reduce((s, x) => s + x.value, 0)), `<span class="muted">${live.reduce((s, x) => s + x.n, 0)} leads</span>`)}
-    ${card('Won', `<span style="color:var(--green)">${inr(by.won?.value ?? 0)}</span>`, `<span class="muted">${by.won?.n ?? 0} leads</span>`)}</div>
+    ${card('Open pipeline', live.reduce((s, x) => s + x.value, 0), `<span class="muted">${live.reduce((s, x) => s + x.n, 0)} leads</span>`, '', true)}
+    ${card('Won', by.won?.value ?? 0, `<span class="muted">${by.won?.n ?? 0} leads</span>`, 'won', true)}</div>
     <div class="grid"><div class="card"><h3>By stage</h3><table>${meta.stages.map((s) => `<tr><td>${label(s)}</td><td class="r">${by[s]?.n ?? 0}</td><td class="r">${inr(by[s]?.value ?? 0)}</td></tr>`).join('')}</table></div>
     <div class="card scroll"><h3>By salesperson</h3><table style="min-width:420px"><tr><th>Name</th><th class="r">Leads</th><th class="r">Open</th><th class="r">Due</th><th class="r">BOQs sent</th><th class="r">Won value</th></tr>
       ${d.byOwner.map((o) => `<tr><td>${esc(o.name)}</td><td class="r">${o.leads}</td><td class="r">${o.open_leads}</td><td class="r ${o.due ? 'overdue' : ''}">${o.due}</td><td class="r">${o.boqs}</td><td class="r">${inr(o.won_value)}</td></tr>`).join('')}</table></div></div>`);
+  $$('.stat').forEach(countUp);
 }
 
 const leadForm = (l = {}) => `<div class="form">
@@ -94,7 +122,7 @@ async function leads(mode) {
     <button class="link" id="csv">Export</button><button class="primary" id="new">New lead</button></div>
     <div class="card" id="newcard" hidden><h3>New lead</h3><div id="nf">${leadForm()}</div><p class="err" id="nerr" role="alert"></p><button class="primary" id="save">Save lead</button></div>
     <div class="card scroll" id="list">Loading…</div>`);
-  let rows = [];
+  let rows = [], first = true;
   const load = async () => {
     const qs = new URLSearchParams({ q: $('#q').value, stage: $('#stage').value, owner: $('#owner')?.value ?? '0', due: $('#due').checked ? '1' : '0', stale: $('#stale').checked ? '1' : '0' });
     rows = await api('leads?' + qs);
@@ -104,6 +132,7 @@ async function leads(mode) {
         <td>${l.last_at ? `${label(l.last_kind)} · ${ago(l.last_at)}<div class="muted clip" title="${esc(l.last_note)}">${esc(l.last_note)}</div>` : '<span class="muted">none yet</span>'}</td>
         <td class="${l.next_followup && l.next_followup <= today() && open(l) ? 'overdue' : ''}">${esc(l.next_followup ?? '—')}</td>
         <td class="r">${l.boq_count}</td><td class="r">${l.last_boq_on ? `${inr(l.last_boq_total)}<br><span class="muted">${esc(l.last_boq_on)}</span>` : '—'}</td></tr>`).join('')}</table>`;
+    stagger($('#list'), first); first = false;
   };
   const reload = run('#nerr', load);
   let t; $('#q').oninput = () => { clearTimeout(t); t = setTimeout(reload, 250); };
@@ -175,7 +204,7 @@ async function leadView(id) {
       <input class="q" aria-label="Quantity" type="number" min="0" step="any" value="${esc(v.qty ?? 1)}" style="width:80px" title="Quantity">
       <input class="d" aria-label="Discount percent" type="number" min="0" max="100" step="any" value="${esc(v.discount_pct ?? 0)}" style="width:80px" title="Discount %">
       <b class="t" style="min-width:90px;text-align:right"></b><button class="link x" aria-label="Remove item">✕</button></div><div class="muted h" style="font-size:12px"></div>`;
-    $('#lines').append(row); row.oninput = recalc; $('.x', row).onclick = () => { row.remove(); recalc(); }; recalc();
+    $('#lines').append(row); row.oninput = recalc; $('.x', row).onclick = () => { row.classList.add('out'); setTimeout(() => { row.remove(); recalc(); }, calm ? 0 : 110); }; recalc();
   };
   $('#addline').onclick = () => active.length ? addLine() : ($('#berr').textContent = 'The price list is empty — an admin must add products first.');
   if (isAdmin()) $('#addcustom').onclick = () => addLine({}, true);
@@ -188,7 +217,7 @@ async function leadView(id) {
       return { ...base, product_id: p.id };
     });
     const r = await api(`leads/${id}/boqs`, { method: 'POST', body: { lines, note: $('#bnote').value } });
-    r.status === 'pending_approval' ? leadView(id).then(() => alertBar(`${r.ref} was sent to an admin for discount approval.`)) : (location.hash = 'boq/' + r.id);
+    r.status === 'pending_approval' ? leadView(id).then(() => alertBar(`${r.ref} was sent to an admin for discount approval.`, false)) : (location.hash = 'boq/' + r.id);
   });
   $('#upd').onclick = run('#eerr', async () => { await api('leads/' + id, { method: 'PATCH', body: formData($('#ef')) }); leadView(id); });
   $('#log').onclick = run('#ierr', async () => { await api(`leads/${id}/interactions`, { method: 'POST', body: { ...formData($('#if')), note: $('textarea[name=note]').value } }); leadView(id); });
@@ -211,7 +240,7 @@ async function boqs(status) {
     ${isAdmin() ? `<select id="bow" aria-label="Salesperson"><option value="0">Everyone</option>${meta.users.map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>` : ''}
     <label class="muted">From <input type="date" id="bfrom"></label><label class="muted">To <input type="date" id="bto"></label><button class="link" id="bcsv">Export</button></div>
     <p class="err" id="berr" role="alert"></p><div class="card scroll" id="blist">Loading…</div>`);
-  let rows = [];
+  let rows = [], first = true;
   const load = run('#berr', async () => {
     rows = await api('boqs?' + new URLSearchParams({ status: $('#bst').value, owner: $('#bow')?.value ?? '0', from: $('#bfrom').value, to: $('#bto').value }));
     const sent = rows.filter((b) => SENT.includes(b.status));
@@ -219,6 +248,7 @@ async function boqs(status) {
       <table><tr><th>Ref</th><th>Client</th><th>Salesperson</th><th>Date</th><th class="r">Total</th><th>Status</th></tr>
       ${rows.map((b) => `<tr><td><a href="#boq/${b.id}">${esc(b.ref)}</a></td><td><a href="#lead/${b.lead_id}">${esc(b.company)}</a></td><td>${esc(b.owner_name)}</td><td>${esc(b.issued_on)}</td><td class="r">${inr(b.total)}</td>
         <td>${statusTag(b.status)}${b.status === 'pending_approval' ? `<div class="muted">${b.over_lines} item(s) over limit${b.note ? ' · ' + esc(b.note) : ''}</div>${isAdmin() ? `<a href="#boq/${b.id}">Review</a>` : ''}` : ''}</td></tr>`).join('')}</table>`;
+    stagger($('#blist'), first); first = false;
   });
   ['#bst', '#bow', '#bfrom', '#bto'].forEach((s) => $(s) && ($(s).onchange = load));
   $('#bcsv').onclick = () => download(`vtech-boqs-${today()}.csv`, [['Ref', 'Client', 'Salesperson', 'Prepared by', 'Date', 'Total', 'Status', 'Note'],
@@ -234,7 +264,7 @@ async function boqView(id) {
     ${pending ? `<div class="warn noprint"><b>Awaiting admin approval.</b> Discounts above the limit are marked below. Do not send this to the client yet.${q.note ? `<br>Reason given: ${esc(q.note)}` : ''}
       ${isAdmin() ? `<div class="bar" style="margin:8px 0 0"><input id="dnote" aria-label="Note to the salesperson" placeholder="Note to the salesperson (optional)" style="flex:1;min-width:200px"><button class="primary" id="ok">Approve and issue</button><button class="link" id="no">Reject</button></div><p class="err" id="derr" role="alert"></p>` : ''}</div>` : ''}
     ${!pending && q.decided_at ? `<p class="muted noprint">${q.status === 'rejected' ? 'Rejected' : 'Discount approved'} on ${when(q.decided_at)}${q.decision_note ? ' — ' + esc(q.decision_note) : ''}</p>` : ''}
-    <div class="doc"><div class="top"><div><h1>VTech Technologies</h1><div class="muted">Bill of Quantities</div></div>
+    <div class="doc"><div class="top"><div><img src="/logo.png" alt="VTech"><h1>V-TECH Technologies Pvt. Ltd.</h1><div class="muted">Bill of Quantities</div></div>
       <div><b>${esc(q.ref)}</b><br>Date: ${esc(q.issued_on)}<br>Prepared by: ${esc(q.user_name)}</div></div>
       <p><b>${esc(q.lead.company)}</b><br>${[q.lead.contact, q.lead.phone, q.lead.email, q.lead.city].filter(Boolean).map(esc).join(' · ')}</p>
       <div class="scroll"><table><tr><th>#</th><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Discount</th><th class="r">Amount</th></tr>

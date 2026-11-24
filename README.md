@@ -19,6 +19,9 @@ Lead tracking for VTech Technologies' sales team.
 ## Local dev
 `npm i && npx wrangler dev` — uses a local D1; tables are created on first request.
 
+## Look and motion
+Colours, logo and favicon follow VTech's own identity (the magenta-to-purple logo, taken from vtechpl.com). Animation is plain CSS and a few lines of JavaScript, using the spring settings published in Pin UI's motion tokens (pinui.xyz, MIT) sampled into CSS `linear()` curves. Nothing is loaded from outside the app.
+
 ## Tests
 ```
 npx wrangler dev --port 8799 --var ADMIN_EMAIL:admin@test.local   # terminal 1
