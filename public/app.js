@@ -334,7 +334,7 @@ async function prices() {
 }
 
 async function users() {
-  const rows = await api('users');
+  const [rows, demo] = await Promise.all([api('users'), api('demo')]);
   shell('users', `<div class="grid"><div class="card scroll" style="grid-column:1/-1"><h3>Team</h3><table><tr><th>Name</th><th>Email</th><th>Role</th><th>Discount limit %</th><th></th></tr>
     ${rows.map((u) => `<tr style="${u.active ? '' : 'opacity:.5'}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td>
       <td>${u.id === me.id ? u.role : `<select data-role="${u.id}" aria-label="Role of ${esc(u.name)}"><option value="member" ${u.role === 'member' ? 'selected' : ''}>salesperson</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option></select>`}</td>
@@ -346,9 +346,18 @@ async function users() {
     <div class="card"><h3>Add salesperson</h3><div class="form" id="uf"><label>Name<input name="name"></label><label>Email<input name="email" type="email"></label>
       <label>Temporary password<input name="password" placeholder="10+ characters"></label><label>Role<select name="role"><option value="member">salesperson</option><option value="admin">admin</option></select></label>
       <label>Discount limit %<input name="max_discount_pct" type="number" min="0" max="100" value="100"></label></div>
-      <p class="err" id="uerr" role="alert"></p><button class="primary" id="uadd">Add</button></div></div>`);
+      <p class="err" id="uerr" role="alert"></p><button class="primary" id="uadd">Add</button></div>
+    <div class="card"><h3>Sample data</h3><p class="muted">${demo.loaded ? 'Sample salespeople, products, leads and BOQs are loaded. Removing them leaves your real records untouched.' : 'Loads four sample salespeople, a price list, 18 leads with history and 13 BOQs, so the tool can be shown with realistic content.'}</p>
+      <p class="err" id="derr" role="alert"></p><button class="${demo.loaded ? 'link' : 'primary'}" id="demo">${demo.loaded ? 'Remove sample data' : 'Load sample data'}</button><div id="dmsg"></div></div></div>`);
   const patch = (id, body) => run('#terr', async () => { await api('users/' + id, { method: 'PATCH', body }); meta = await api('meta'); users(); });
   $('#uadd').onclick = run('#uerr', async () => { await api('users', { method: 'POST', body: formData($('#uf')) }); meta = await api('meta'); users(); });
+  $('#demo').onclick = run('#derr', async () => {
+    if (!demo.loaded) {
+      const r = await api('demo', { method: 'POST' }); meta = await api('meta'); await users();
+      $('#dmsg').innerHTML = `<p class="warn">Sample salespeople sign in with the password <b>${esc(r.password)}</b> (shown once): ${r.logins.map(esc).join(', ')}</p>`;
+    } else if ($('#demo').dataset.sure) { await api('demo', { method: 'DELETE' }); meta = await api('meta'); users(); }
+    else { $('#demo').dataset.sure = 1; $('#demo').textContent = 'Click again to remove all sample data'; }
+  });
   $('#rem').onclick = run('#terr', async () => { const r = await api('send-reminders', { method: 'POST' }); $('#rmsg').textContent = `Sent to ${r.sent} of ${r.users}${r.failed.length ? '; failed: ' + r.failed.join(', ') : ''}`; });
   $$('button[data-id]').forEach((b) => (b.onclick = (e) => patch(b.dataset.id, { active: b.dataset.active !== '1' })(e)));
   $$('[data-role]').forEach((s) => (s.onchange = (e) => patch(s.dataset.role, { role: s.value })(e)));

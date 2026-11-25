@@ -19,6 +19,9 @@ Lead tracking for VTech Technologies' sales team.
 ## Local dev
 `npm i && npx wrangler dev` — uses a local D1; tables are created on first request.
 
+## Sample data
+Users → Sample data loads four sample salespeople, a 30-item price list, 18 leads with interaction history and 13 BOQs (two awaiting approval), dated relative to today. The sample accounts' password is generated at load and shown once. "Remove sample data" deletes only what was loaded, plus anything created on the sample leads or by the sample accounts. Prices are illustrative, not VTech's.
+
 ## Look and motion
 Colours, logo and favicon follow VTech's own identity (the magenta-to-purple logo, taken from vtechpl.com). Animation is plain CSS and a few lines of JavaScript, using the spring settings published in Pin UI's motion tokens (pinui.xyz, MIT) sampled into CSS `linear()` curves. Nothing is loaded from outside the app.
 

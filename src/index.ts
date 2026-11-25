@@ -2,6 +2,7 @@
 // and an admin-controlled price list with discount caps and approvals. Cloudflare Worker + D1.
 import { AUTH_SCHEMA, currentUser, login, logout, setup, createUser, updateUser, listUsers, changeOwnPassword, type User } from './auth';
 import { sendMail, esc } from './mail';
+import { DEMO_SCHEMA, DEMO_DOMAIN, demoStatus, loadDemo, clearDemo } from './demo';
 
 export interface Env { DB: D1Database; ASSETS: Fetcher; MAILER: SendEmail; ADMIN_EMAIL: string; MAIL_FROM: string }
 
@@ -30,7 +31,8 @@ CREATE TABLE IF NOT EXISTS boq_lines (id INTEGER PRIMARY KEY, boq_id INTEGER NOT
   description TEXT NOT NULL, qty REAL NOT NULL, unit_price REAL NOT NULL, discount_pct REAL NOT NULL DEFAULT 0, line_total REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS boq_lines_boq ON boq_lines(boq_id);
 CREATE TABLE IF NOT EXISTS price_history (id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id), user_id INTEGER REFERENCES users(id),
-  old_price REAL, new_price REAL NOT NULL, old_cap REAL, new_cap REAL NOT NULL, at TEXT NOT NULL DEFAULT (datetime('now')))`;
+  old_price REAL, new_price REAL NOT NULL, old_cap REAL, new_cap REAL NOT NULL, at TEXT NOT NULL DEFAULT (datetime('now')));
+${DEMO_SCHEMA}`;
 
 // Columns added after the first release. The live database already has the tables, so they are added one by one.
 const COLUMNS: Record<string, Record<string, string>> = {
@@ -338,6 +340,9 @@ async function api(req: Request, env: Env, url: URL, ctx: ExecutionContext): Pro
   if (p === '/api/users' && req.method === 'POST') return createUser(db, await body());
   const userM = p.match(/^\/api\/users\/(\d+)$/);
   if (userM && req.method === 'PATCH') return updateUser(db, Number(userM[1]), await body());
+  if (p === '/api/demo' && req.method === 'GET') return json(await demoStatus(db));
+  if (p === '/api/demo' && req.method === 'POST') { const r = await loadDemo(db, user); return json(r, 'error' in r ? 409 : 200); }
+  if (p === '/api/demo' && req.method === 'DELETE') return json(await clearDemo(db));
   if (p === '/api/send-reminders' && req.method === 'POST') return json(await sendReminders(env));
   return json({ error: 'not found' }, 404);
 }
@@ -351,8 +356,8 @@ export async function sendReminders(env: Env) {
   ]);
   const today = todayIST();
   const { results } = await env.DB.prepare(`SELECT l.id, l.company, l.contact, l.phone, l.stage, l.next_followup, u.email, u.name
-    FROM leads l JOIN users u ON u.id = l.owner_id WHERE u.active = 1 AND l.next_followup <= ? AND l.stage NOT IN ('won','lost')
-    ORDER BY u.email, l.next_followup`).bind(today).all<Record<string, string>>();
+    FROM leads l JOIN users u ON u.id = l.owner_id WHERE u.active = 1 AND u.email NOT LIKE ? AND l.next_followup <= ? AND l.stage NOT IN ('won','lost')
+    ORDER BY u.email, l.next_followup`).bind('%' + DEMO_DOMAIN, today).all<Record<string, string>>();
   const byUser = new Map<string, Record<string, string>[]>();
   for (const r of results) byUser.set(r.email, [...(byUser.get(r.email) ?? []), r]);
   let sent = 0;

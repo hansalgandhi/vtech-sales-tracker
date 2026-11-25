@@ -17,7 +17,7 @@ function client() {
     if (set) cookie = set.split(';')[0];
     return { status: res.status, data: await res.json().catch(() => ({})) };
   };
-  return { get: (p) => call('GET', p), post: (p, b, h) => call('POST', p, b, h), patch: (p, b) => call('PATCH', p, b) };
+  return { del: (p) => call('DELETE', p), get: (p) => call('GET', p), post: (p, b, h) => call('POST', p, b, h), patch: (p, b) => call('PATCH', p, b) };
 }
 const ok = async (p) => { const r = await p; assert.equal(r.status, 200, JSON.stringify(r.data)); return r.data; };
 
@@ -128,4 +128,34 @@ test('accounts: password change, last-admin guard, login lockout, reminders', as
   const locked = client();
   for (let i = 0; i < 5; i++) assert.equal((await locked.post('login', { email: rep2Email, password: 'nope' })).status, 401);
   assert.equal((await locked.post('login', { email: rep2Email, password: PW })).status, 429);
+});
+
+test('sample data loads, behaves like real data, and removes cleanly', async () => {
+  assert.equal((await rep.post('demo')).status, 403);
+  const count = async () => [(await ok(admin.get('leads'))).length, (await ok(admin.get('products'))).length, (await ok(admin.get('users'))).length, (await ok(admin.get('boqs'))).length];
+  const before = await count();
+  const r = await ok(admin.post('demo'));
+  assert.equal((await admin.post('demo')).status, 409, 'cannot be loaded twice');
+  const after = await count();
+  assert.deepEqual(after.map((n, i) => n - before[i]), [18, 30, 4, 13]);
+  const demoRep = client();
+  await ok(demoRep.post('login', { email: r.logins[0], password: r.password }));
+  const mine = await ok(demoRep.get('leads'));
+  assert.ok(mine.length >= 4 && mine.every((l) => l.owner_name === 'Rohan Mehta' && l.last_at));
+  const d = await ok(admin.get('dashboard'));
+  assert.ok(d.pending >= 2 && d.stale >= 2 && d.due >= 4 && d.boq_n >= 7);
+  const pend = (await ok(admin.get('boqs?status=pending_approval'))).filter((b) => /-S\d\d$/.test(b.ref));
+  assert.deepEqual(pend.map((b) => b.over_lines), [1, 1]);
+  const orchid = (await ok(admin.get('leads?q=Orchid')))[0];
+  assert.equal(orchid.boq_count, 2);
+  const quoted = (await ok(admin.get('leads/' + orchid.id))).quoted;
+  assert.deepEqual(quoted.filter((q) => q.unit_price === 138000).length, 1, 'the older BOQ carries the price before the change');
+  // a real lead created by a sample salesperson during a demo goes when the sample data goes
+  await ok(demoRep.post('leads', { company: 'Made during demo' }));
+  await ok(admin.del('demo'));
+  assert.deepEqual(await count(), before);
+  assert.equal((await demoRep.get('me')).status, 401);
+  assert.equal((await ok(admin.get('demo'))).loaded, false);
+  await ok(admin.post('demo')); await ok(admin.del('demo')); // loads again after removal
+  assert.deepEqual(await count(), before);
 });
